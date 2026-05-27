@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
 import StakeholderGrid from './StakeholderGrid';
+import AddStakeholderForm from './AddStakeholderForm';
 import type { ProjectStakeholdersLatestResponse } from '../../shared';
 
 // TODO: replace with router param when projects list lands.
@@ -13,27 +14,26 @@ type State =
 
 export default function App() {
   const [state, setState] = useState<State>({ status: 'loading' });
+  const [showForm, setShowForm] = useState(false);
+
+  // Fetch the project's latest snapshot. Reused on mount and after a successful
+  // add, so the grid re-renders from fresh server data.
+  const load = useCallback(async () => {
+    setState({ status: 'loading' });
+    try {
+      const data = await apiFetch<ProjectStakeholdersLatestResponse>(
+        `/api/projects/${PROJECT_ID}/stakeholders/latest`,
+      );
+      setState({ status: 'ready', data });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      setState({ status: 'error', message });
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    setState({ status: 'loading' });
-
-    apiFetch<ProjectStakeholdersLatestResponse>(
-      `/api/projects/${PROJECT_ID}/stakeholders/latest`,
-    )
-      .then((data) => {
-        if (!cancelled) setState({ status: 'ready', data });
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Unknown error';
-        setState({ status: 'error', message });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void load();
+  }, [load]);
 
   if (state.status === 'loading') {
     return <p>Loading…</p>;
@@ -54,7 +54,31 @@ export default function App() {
         fontFamily: 'system-ui, sans-serif',
       }}
     >
-      <h1>Stakeholders for {project.name}</h1>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 16,
+        }}
+      >
+        <h1 style={{ margin: 0 }}>Stakeholders for {project.name}</h1>
+        <button type="button" onClick={() => setShowForm(true)} disabled={showForm}>
+          + Add stakeholder
+        </button>
+      </div>
+
+      {showForm && (
+        <AddStakeholderForm
+          projectId={PROJECT_ID}
+          onCancel={() => setShowForm(false)}
+          onCreated={() => {
+            setShowForm(false);
+            void load();
+          }}
+        />
+      )}
+
       {snapshot ? (
         <>
           <p>

@@ -1,5 +1,7 @@
 // Barrel file for types shared between client and server.
 // Export shared types from here as they are added.
+export * from './relationships';
+export * from './create-stakeholder';
 
 /** One stakeholder plus its position values within the latest snapshot. */
 export interface StakeholderPositionDTO {

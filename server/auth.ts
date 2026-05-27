@@ -61,7 +61,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** Outcome of a project permission check. */
 export type PermissionResult =
-  | { ok: true; project: { id: string; name: string } }
+  | { ok: true; project: { id: string; name: string }; accountId: string }
   | { ok: false; reason: 'not_found' | 'forbidden' };
 
 /**
@@ -125,5 +125,9 @@ export async function requirePermissionOnProject(
     return { ok: false, reason: 'forbidden' };
   }
 
-  return { ok: true, project: { id: scope.projectId, name: scope.projectName } };
+  return {
+    ok: true,
+    project: { id: scope.projectId, name: scope.projectName },
+    accountId: scope.accountId,
+  };
 }

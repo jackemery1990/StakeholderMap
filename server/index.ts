@@ -4,7 +4,11 @@ import { and, asc, desc, eq } from 'drizzle-orm';
 import { db } from '../db/index';
 import { snapshots, stakeholders, stakeholderPositions } from '../db/schema';
 import { requireUser, requirePermissionOnProject } from './auth';
-import type { ProjectStakeholdersLatestResponse } from '../shared/index';
+import {
+  validateCreateStakeholder,
+  type ProjectStakeholdersLatestResponse,
+  type CreateStakeholderResponse,
+} from '../shared/index';
 
 // Required runtime configuration. No defaults, no fallbacks: these must be
 // provided via the environment (Replit Secrets). Consumed by later steps
@@ -29,6 +33,9 @@ app.use(
     allowedHeaders: ['Content-Type', 'X-User-Id'],
   }),
 );
+
+// Parse JSON request bodies (needed by the add-stakeholder POST below).
+app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
@@ -119,6 +126,112 @@ app.get(
       res.json(body);
     } catch (err) {
       console.error('GET /api/projects/:projectId/stakeholders/latest failed:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+// Add a stakeholder to a project's latest snapshot. Writing requires "editor"
+// or higher (readers can't write); scope inheritance still applies, so an
+// account-level director passes.
+app.post(
+  '/api/projects/:projectId/stakeholders',
+  requireUser,
+  async (req, res) => {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(400).json({ error: 'Missing X-User-Id header' });
+      return;
+    }
+    const { projectId } = req.params;
+    if (typeof projectId !== 'string') {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+
+    try {
+      const auth = await requirePermissionOnProject(userId, projectId, 'editor');
+      if (!auth.ok) {
+        if (auth.reason === 'not_found') {
+          res.status(404).json({ error: 'Project not found' });
+        } else {
+          res.status(403).json({ error: 'Forbidden' });
+        }
+        return;
+      }
+
+      const validation = validateCreateStakeholder(req.body);
+      if (!validation.ok) {
+        const firstError = Object.values(validation.errors)[0] ?? 'Invalid request body.';
+        res.status(400).json({ error: firstError, fields: validation.errors });
+        return;
+      }
+      const input = validation.value;
+
+      // The new position attaches to the project's latest snapshot.
+      const [snapshot] = await db
+        .select({ id: snapshots.id })
+        .from(snapshots)
+        .where(eq(snapshots.projectId, projectId))
+        .orderBy(desc(snapshots.capturedAt))
+        .limit(1);
+
+      if (!snapshot) {
+        // TODO: when snapshot management lands, decide whether to auto-create a
+        // snapshot here or require one explicitly.
+        res.status(409).json({
+          error: 'Project has no snapshot to add the stakeholder to.',
+        });
+        return;
+      }
+
+      // Insert the stakeholder and its position atomically: if the position
+      // insert fails, the stakeholder insert rolls back with it.
+      // TODO: snapshot semantics. Currently we mutate the latest snapshot to
+      // include the new stakeholder. When snapshots become frozen historical
+      // records, this should either create a new snapshot or refuse to add to a
+      // locked one.
+      const created = await db.transaction(async (tx) => {
+        const [stakeholder] = await tx
+          .insert(stakeholders)
+          .values({
+            accountId: auth.accountId,
+            name: input.name,
+            role: input.role ?? null,
+            organisation: input.organisation ?? null,
+          })
+          .returning();
+
+        const [position] = await tx
+          .insert(stakeholderPositions)
+          .values({
+            stakeholderId: stakeholder.id,
+            projectId,
+            snapshotId: snapshot.id,
+            power: input.power,
+            interest: input.interest,
+            relationship: input.relationship,
+          })
+          .returning();
+
+        return { stakeholder, position };
+      });
+
+      const body: CreateStakeholderResponse = {
+        id: created.stakeholder.id,
+        name: created.stakeholder.name,
+        role: created.stakeholder.role,
+        organisation: created.stakeholder.organisation,
+        power: created.position.power,
+        interest: created.position.interest,
+        relationship: created.position.relationship,
+        targetRelationship: created.position.targetRelationship,
+        targetPower: created.position.targetPower,
+        targetInterest: created.position.targetInterest,
+      };
+      res.status(201).json(body);
+    } catch (err) {
+      console.error('POST /api/projects/:projectId/stakeholders failed:', err);
       res.status(500).json({ error: 'Internal server error' });
     }
   },
