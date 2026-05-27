@@ -2,6 +2,7 @@
 // Export shared types from here as they are added.
 export * from './relationships';
 export * from './create-stakeholder';
+export * from './projects-list';
 
 /** One stakeholder plus its position values within the latest snapshot. */
 export interface StakeholderPositionDTO {

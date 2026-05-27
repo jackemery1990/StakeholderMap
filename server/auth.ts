@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import { db } from '../db/index';
 import { projects, programmes, permissions } from '../db/schema';
 
@@ -130,4 +130,49 @@ export async function requirePermissionOnProject(
     project: { id: scope.projectId, name: scope.projectName },
     accountId: scope.accountId,
   };
+}
+
+/**
+ * Every project id `userId` can see, derived from their permission rows.
+ *
+ * A grant's scope widens what it reaches: an `account` grant covers every
+ * project under that account, a `programme` grant every project under that
+ * programme, a `project` grant just that one. Role/rank is irrelevant here —
+ * any grant at all confers visibility (the lowest role, viewer, can read).
+ *
+ * Returns a deduplicated list of ids that actually exist in the projects table
+ * (a stale project-scope grant pointing at a deleted project resolves to
+ * nothing). An empty array means "no access", which callers treat as a valid
+ * empty result, not an error.
+ */
+export async function getAccessibleProjectIds(userId: string): Promise<string[]> {
+  const grants = await db
+    .select({ scopeType: permissions.scopeType, scopeId: permissions.scopeId })
+    .from(permissions)
+    .where(eq(permissions.userId, userId));
+
+  if (grants.length === 0) return [];
+
+  const accountIds = grants.filter((g) => g.scopeType === 'account').map((g) => g.scopeId);
+  const programmeIds = grants.filter((g) => g.scopeType === 'programme').map((g) => g.scopeId);
+  const projectIds = grants.filter((g) => g.scopeType === 'project').map((g) => g.scopeId);
+
+  // One OR'd query: a project is visible if its account, its programme, or the
+  // project itself is granted. Each clause is only added when it has ids to
+  // match, so we never emit an empty `IN ()`.
+  const clauses = [
+    accountIds.length ? inArray(programmes.accountId, accountIds) : undefined,
+    programmeIds.length ? inArray(projects.programmeId, programmeIds) : undefined,
+    projectIds.length ? inArray(projects.id, projectIds) : undefined,
+  ].filter((c): c is NonNullable<typeof c> => c !== undefined);
+
+  if (clauses.length === 0) return [];
+
+  const rows = await db
+    .selectDistinct({ id: projects.id })
+    .from(projects)
+    .innerJoin(programmes, eq(programmes.id, projects.programmeId))
+    .where(or(...clauses));
+
+  return rows.map((r) => r.id);
 }

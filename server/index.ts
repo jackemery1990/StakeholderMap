@@ -1,15 +1,26 @@
 import express from 'express';
 import cors from 'cors';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, countDistinct, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db/index';
-import { snapshots, stakeholders, stakeholderPositions } from '../db/schema';
-import { requireUser, requirePermissionOnProject } from './auth';
+import {
+  accounts,
+  programmes,
+  projects,
+  phases,
+  snapshots,
+  stakeholders,
+  stakeholderPositions,
+} from '../db/schema';
+import { requireUser, requirePermissionOnProject, getAccessibleProjectIds } from './auth';
 import {
   validateCreateStakeholder,
   validateUpdateStakeholder,
   type ProjectStakeholdersLatestResponse,
   type CreateStakeholderResponse,
   type StakeholderPositionDTO,
+  type ProjectsListResponse,
+  type ProjectListAccount,
+  type ProjectListProgramme,
 } from '../shared/index';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,6 +54,113 @@ app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+// Every project the authenticated user can access, grouped account → programme
+// → project. Unlike the per-project routes this does NOT use
+// requirePermissionOnProject: it resolves the user's reachable projects from
+// their permission rows directly. "No permissions" is a valid empty result
+// ({ accounts: [] }), never a 403/404.
+app.get('/api/projects', requireUser, async (req, res) => {
+  const userId = req.userId;
+  if (!userId) {
+    res.status(400).json({ error: 'Missing X-User-Id header' });
+    return;
+  }
+
+  try {
+    const projectIds = await getAccessibleProjectIds(userId);
+    if (projectIds.length === 0) {
+      const empty: ProjectsListResponse = { accounts: [] };
+      res.json(empty);
+      return;
+    }
+
+    // Each accessible project with its owning programme + account and the name
+    // of its current phase (left join: currentPhaseId is nullable and has no FK).
+    const projectRows = await db
+      .select({
+        projectId: projects.id,
+        projectName: projects.name,
+        currentPhaseName: phases.name,
+        programmeId: programmes.id,
+        programmeName: programmes.name,
+        accountId: accounts.id,
+        accountName: accounts.name,
+      })
+      .from(projects)
+      .innerJoin(programmes, eq(programmes.id, projects.programmeId))
+      .innerJoin(accounts, eq(accounts.id, programmes.accountId))
+      .leftJoin(phases, eq(phases.id, projects.currentPhaseId))
+      .where(inArray(projects.id, projectIds));
+
+    // Latest snapshot per project (most recent capturedAt), then a distinct
+    // stakeholder count within those snapshots. Two small queries beat one
+    // window-function mega-query for clarity. Projects with no snapshot, or a
+    // snapshot with no positions, simply never appear → count defaults to 0.
+    const latestSnapshots = await db
+      .selectDistinctOn([snapshots.projectId], {
+        projectId: snapshots.projectId,
+        snapshotId: snapshots.id,
+      })
+      .from(snapshots)
+      .where(inArray(snapshots.projectId, projectIds))
+      .orderBy(asc(snapshots.projectId), desc(snapshots.capturedAt));
+
+    const countByProject = new Map<string, number>();
+    if (latestSnapshots.length > 0) {
+      const snapshotIds = latestSnapshots.map((s) => s.snapshotId);
+      const countRows = await db
+        .select({
+          projectId: stakeholderPositions.projectId,
+          count: countDistinct(stakeholderPositions.stakeholderId),
+        })
+        .from(stakeholderPositions)
+        .where(inArray(stakeholderPositions.snapshotId, snapshotIds))
+        .groupBy(stakeholderPositions.projectId);
+      for (const row of countRows) countByProject.set(row.projectId, row.count);
+    }
+
+    // Group into account → programme → project, preserving insertion order while
+    // we build, then sort everything by name at the end.
+    const accountsById = new Map<string, ProjectListAccount>();
+    const programmesById = new Map<string, ProjectListProgramme>();
+
+    for (const row of projectRows) {
+      let account = accountsById.get(row.accountId);
+      if (!account) {
+        account = { id: row.accountId, name: row.accountName, programmes: [] };
+        accountsById.set(row.accountId, account);
+      }
+
+      let programme = programmesById.get(row.programmeId);
+      if (!programme) {
+        programme = { id: row.programmeId, name: row.programmeName, projects: [] };
+        programmesById.set(row.programmeId, programme);
+        account.programmes.push(programme);
+      }
+
+      programme.projects.push({
+        id: row.projectId,
+        name: row.projectName,
+        currentPhaseName: row.currentPhaseName ?? null,
+        stakeholderCount: countByProject.get(row.projectId) ?? 0,
+      });
+    }
+
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+    const sorted = [...accountsById.values()].sort(byName);
+    for (const account of sorted) {
+      account.programmes.sort(byName);
+      for (const programme of account.programmes) programme.projects.sort(byName);
+    }
+
+    const body: ProjectsListResponse = { accounts: sorted };
+    res.json(body);
+  } catch (err) {
+    console.error('GET /api/projects failed:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Latest snapshot for a project, with every stakeholder position joined to its
