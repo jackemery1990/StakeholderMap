@@ -9,9 +9,9 @@
     "dev:server": "tsx watch server/index.ts",
     "build": "vite build",
     "typecheck": "tsc -p client/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit",
-    "db:generate": "echo 'db:generate not implemented yet'",
-    "db:migrate": "echo 'db:migrate not implemented yet'",
-    "db:seed": "echo 'db:seed not implemented yet'"
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "tsx db/seed.ts"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.61.8",

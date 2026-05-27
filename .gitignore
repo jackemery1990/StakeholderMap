@@ -4,7 +4,6 @@ client/dist/
 *.local
 .env
 .DS_Store
-db/migrations/meta/
 
 # Claude Code per-user local settings (not shared)
 .claude/settings.local.json
