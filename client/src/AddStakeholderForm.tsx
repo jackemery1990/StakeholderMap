@@ -1,16 +1,26 @@
 import { useState } from 'react';
-import { apiPost } from './api';
+import { apiPost, apiPatch } from './api';
 import {
   RELATIONSHIPS,
   validateCreateStakeholder,
+  validateUpdateStakeholder,
   type CreateStakeholderFieldErrors,
   type CreateStakeholderResponse,
+  type StakeholderPositionDTO,
+  type UpdateStakeholderRequest,
 } from '../../shared';
+
+// Same form serves both flows. In "edit" mode it pre-fills from the selected
+// stakeholder and PATCHes only the changed fields.
+export type StakeholderFormMode =
+  | { kind: 'add' }
+  | { kind: 'edit'; stakeholder: StakeholderPositionDTO };
 
 interface AddStakeholderFormProps {
   projectId: string;
+  mode: StakeholderFormMode;
   onCancel: () => void;
-  onCreated: () => void;
+  onSaved: () => void;
 }
 
 const DEFAULT_POWER = 5;
@@ -21,41 +31,92 @@ const labelStyle: React.CSSProperties = { display: 'block', fontWeight: 600, mar
 const fieldStyle: React.CSSProperties = { marginBottom: 14 };
 const errorStyle: React.CSSProperties = { color: '#C0392B', fontSize: 13, marginTop: 4 };
 
-export default function AddStakeholderForm({ projectId, onCancel, onCreated }: AddStakeholderFormProps) {
-  const [name, setName] = useState('');
-  const [role, setRole] = useState('');
-  const [organisation, setOrganisation] = useState('');
-  const [power, setPower] = useState(DEFAULT_POWER);
-  const [interest, setInterest] = useState(DEFAULT_INTEREST);
-  const [relationship, setRelationship] = useState(DEFAULT_RELATIONSHIP);
+// Normalise free text the same way the server does, so the change-diff compares
+// like with like (trim; empty → null for the optional fields).
+function emptyToNull(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+export default function AddStakeholderForm({ projectId, mode, onCancel, onSaved }: AddStakeholderFormProps) {
+  const initial = mode.kind === 'edit' ? mode.stakeholder : null;
+
+  const [name, setName] = useState(initial?.name ?? '');
+  const [role, setRole] = useState(initial?.role ?? '');
+  const [organisation, setOrganisation] = useState(initial?.organisation ?? '');
+  const [power, setPower] = useState(initial?.power ?? DEFAULT_POWER);
+  const [interest, setInterest] = useState(initial?.interest ?? DEFAULT_INTEREST);
+  const [relationship, setRelationship] = useState(initial?.relationship ?? DEFAULT_RELATIONSHIP);
 
   const [errors, setErrors] = useState<CreateStakeholderFieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const isEdit = mode.kind === 'edit';
 
   // Clear a field's inline error as the user edits it.
   function clearError(field: keyof CreateStakeholderFieldErrors) {
     setErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
   }
 
+  // Fields that differ from the original (edit mode only). null role/org clears.
+  function buildDiff(current: StakeholderPositionDTO): UpdateStakeholderRequest {
+    const diff: UpdateStakeholderRequest = {};
+    const nameNorm = name.trim();
+    const roleNorm = emptyToNull(role);
+    const orgNorm = emptyToNull(organisation);
+    if (nameNorm !== current.name) diff.name = nameNorm;
+    if (roleNorm !== current.role) diff.role = roleNorm;
+    if (orgNorm !== current.organisation) diff.organisation = orgNorm;
+    if (power !== current.power) diff.power = power;
+    if (interest !== current.interest) diff.interest = interest;
+    if (relationship !== current.relationship) diff.relationship = relationship;
+    return diff;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitError(null);
 
-    // Validate with the same shared validator the server uses.
+    if (mode.kind === 'edit') {
+      const diff = buildDiff(mode.stakeholder);
+      // No changes: close without an API call (acts like Cancel).
+      if (Object.keys(diff).length === 0) {
+        onCancel();
+        return;
+      }
+      const result = validateUpdateStakeholder(diff);
+      if (!result.ok) {
+        setErrors(result.errors);
+        return;
+      }
+      setErrors({});
+      setSubmitting(true);
+      try {
+        await apiPatch<StakeholderPositionDTO>(
+          `/api/projects/${projectId}/stakeholders/${mode.stakeholder.id}`,
+          result.value,
+        );
+        onSaved();
+      } catch (err) {
+        setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    // Add mode.
     const result = validateCreateStakeholder({ name, role, organisation, power, interest, relationship });
     if (!result.ok) {
       setErrors(result.errors);
       return;
     }
     setErrors({});
-
     setSubmitting(true);
     try {
       await apiPost<CreateStakeholderResponse>(`/api/projects/${projectId}/stakeholders`, result.value);
-      onCreated();
+      onSaved();
     } catch (err) {
-      // Server/network error: keep the form open so the user can retry.
       setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
       setSubmitting(false);
     }
@@ -73,7 +134,7 @@ export default function AddStakeholderForm({ projectId, onCancel, onCreated }: A
         maxWidth: 480,
       }}
     >
-      <h2 style={{ marginTop: 0, fontSize: 18 }}>Add stakeholder</h2>
+      <h2 style={{ marginTop: 0, fontSize: 18 }}>{isEdit ? 'Edit stakeholder' : 'Add stakeholder'}</h2>
 
       <div style={fieldStyle}>
         <label htmlFor="sf-name" style={labelStyle}>
@@ -197,7 +258,7 @@ export default function AddStakeholderForm({ projectId, onCancel, onCreated }: A
 
       <div style={{ display: 'flex', gap: 10 }}>
         <button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : 'Add stakeholder'}
+          {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Add stakeholder'}
         </button>
         <button type="button" onClick={onCancel} disabled={submitting}>
           Cancel

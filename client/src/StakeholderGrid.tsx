@@ -113,9 +113,10 @@ const QUADRANTS: Quadrant[] = [
 
 interface StakeholderGridProps {
   stakeholders: StakeholderPositionDTO[];
+  onSelect: (stakeholder: StakeholderPositionDTO) => void;
 }
 
-export default function StakeholderGrid({ stakeholders }: StakeholderGridProps) {
+export default function StakeholderGrid({ stakeholders, onSelect }: StakeholderGridProps) {
   const dots = layout(stakeholders);
 
   return (
@@ -219,9 +220,9 @@ export default function StakeholderGrid({ stakeholders }: StakeholderGridProps) 
           high
         </text>
 
-        {/* Dots */}
+        {/* Dots — click to edit */}
         {dots.map((d) => (
-          <g key={d.id}>
+          <g key={d.id} onClick={() => onSelect(d)} style={{ cursor: 'pointer' }}>
             <text x={d.x} y={d.y - R - 5} fontSize={11} fill="#222" textAnchor="middle">
               {shortLabel(d.name)}
             </text>

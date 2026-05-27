@@ -84,3 +84,70 @@ export function validateCreateStakeholder(input: unknown): CreateStakeholderVali
     },
   };
 }
+
+/** Request body for PATCH /api/projects/:projectId/stakeholders/:stakeholderId. */
+export interface UpdateStakeholderRequest {
+  name?: string;
+  role?: string | null; // null clears the field
+  organisation?: string | null; // null clears the field
+  power?: number; // 1–10
+  interest?: number; // 1–10
+  relationship?: number; // 1–5
+}
+
+export type UpdateStakeholderValidation =
+  | { ok: true; value: UpdateStakeholderRequest }
+  | { ok: false; errors: CreateStakeholderFieldErrors };
+
+/**
+ * Validate a partial update. Only fields PRESENT in the input are validated and
+ * returned; absent fields mean "leave unchanged". role/organisation may be null
+ * (to clear them); name, if present, must be a non-empty string. Field rules
+ * otherwise match create. Reuses the same per-field helpers as create.
+ */
+export function validateUpdateStakeholder(input: unknown): UpdateStakeholderValidation {
+  const errors: CreateStakeholderFieldErrors = {};
+  const data: Record<string, unknown> =
+    typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+  const value: UpdateStakeholderRequest = {};
+
+  if ('name' in data) {
+    const name = typeof data.name === 'string' ? data.name.trim() : '';
+    if (typeof data.name !== 'string' || name.length === 0) errors.name = 'Name is required.';
+    else if (name.length > 100) errors.name = 'Name must be 100 characters or fewer.';
+    else value.name = name;
+  }
+
+  if ('role' in data) {
+    const r = optionalText(data.role, 'Role');
+    if (r.error) errors.role = r.error;
+    else value.role = r.value;
+  }
+
+  if ('organisation' in data) {
+    const o = optionalText(data.organisation, 'Organisation');
+    if (o.error) errors.organisation = o.error;
+    else value.organisation = o.value;
+  }
+
+  if ('power' in data) {
+    if (!isInt(data.power) || data.power < 1 || data.power > 10) {
+      errors.power = 'Power must be a whole number from 1 to 10.';
+    } else value.power = data.power;
+  }
+
+  if ('interest' in data) {
+    if (!isInt(data.interest) || data.interest < 1 || data.interest > 10) {
+      errors.interest = 'Interest must be a whole number from 1 to 10.';
+    } else value.interest = data.interest;
+  }
+
+  if ('relationship' in data) {
+    if (!isInt(data.relationship) || !RELATIONSHIP_VALUES.includes(data.relationship)) {
+      errors.relationship = 'Relationship must be one of the five options.';
+    } else value.relationship = data.relationship;
+  }
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  return { ok: true, value };
+}

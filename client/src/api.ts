@@ -37,10 +37,10 @@ export async function apiFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** POST `body` as JSON to `path` and parse the JSON response as `T`. Throws on a non-2xx response. */
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+// Send a JSON body with the given method and parse the JSON response as `T`.
+async function sendJson<T>(method: 'POST' | 'PATCH', path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
-    method: 'POST',
+    method,
     headers: {
       'Content-Type': 'application/json',
       'X-User-Id': PLACEHOLDER_USER_ID,
@@ -49,4 +49,14 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) throw new Error(await errorMessage(res));
   return res.json() as Promise<T>;
+}
+
+/** POST `body` as JSON to `path`. Throws on a non-2xx response. */
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>('POST', path, body);
+}
+
+/** PATCH `body` as JSON to `path`. Throws on a non-2xx response. */
+export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>('PATCH', path, body);
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './api';
 import StakeholderGrid from './StakeholderGrid';
-import AddStakeholderForm from './AddStakeholderForm';
+import AddStakeholderForm, { type StakeholderFormMode } from './AddStakeholderForm';
 import type { ProjectStakeholdersLatestResponse } from '../../shared';
 
 // TODO: replace with router param when projects list lands.
@@ -14,7 +14,8 @@ type State =
 
 export default function App() {
   const [state, setState] = useState<State>({ status: 'loading' });
-  const [showForm, setShowForm] = useState(false);
+  // null = closed; otherwise the form is open in add or edit mode.
+  const [formMode, setFormMode] = useState<StakeholderFormMode | null>(null);
 
   // Fetch the project's latest snapshot. Reused on mount and after a successful
   // add, so the grid re-renders from fresh server data.
@@ -63,17 +64,20 @@ export default function App() {
         }}
       >
         <h1 style={{ margin: 0 }}>Stakeholders for {project.name}</h1>
-        <button type="button" onClick={() => setShowForm(true)} disabled={showForm}>
+        <button type="button" onClick={() => setFormMode({ kind: 'add' })} disabled={formMode !== null}>
           + Add stakeholder
         </button>
       </div>
 
-      {showForm && (
+      {formMode && (
         <AddStakeholderForm
+          // Remount when the target changes so fields re-init from the new mode.
+          key={formMode.kind === 'edit' ? `edit-${formMode.stakeholder.id}` : 'add'}
           projectId={PROJECT_ID}
-          onCancel={() => setShowForm(false)}
-          onCreated={() => {
-            setShowForm(false);
+          mode={formMode}
+          onCancel={() => setFormMode(null)}
+          onSaved={() => {
+            setFormMode(null);
             void load();
           }}
         />
@@ -84,7 +88,10 @@ export default function App() {
           <p>
             {snapshot.label}, captured {new Date(snapshot.capturedAt).toLocaleString()}
           </p>
-          <StakeholderGrid stakeholders={stakeholders} />
+          <StakeholderGrid
+            stakeholders={stakeholders}
+            onSelect={(s) => setFormMode({ kind: 'edit', stakeholder: s })}
+          />
         </>
       ) : (
         <p>No snapshots yet.</p>

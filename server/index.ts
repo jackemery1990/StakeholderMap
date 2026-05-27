@@ -6,9 +6,13 @@ import { snapshots, stakeholders, stakeholderPositions } from '../db/schema';
 import { requireUser, requirePermissionOnProject } from './auth';
 import {
   validateCreateStakeholder,
+  validateUpdateStakeholder,
   type ProjectStakeholdersLatestResponse,
   type CreateStakeholderResponse,
+  type StakeholderPositionDTO,
 } from '../shared/index';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Required runtime configuration. No defaults, no fallbacks: these must be
 // provided via the environment (Replit Secrets). Consumed by later steps
@@ -232,6 +236,168 @@ app.post(
       res.status(201).json(body);
     } catch (err) {
       console.error('POST /api/projects/:projectId/stakeholders failed:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+// Edit a stakeholder. Updates the account-level stakeholder record (name/role/
+// organisation) and/or its position in the project's latest snapshot (power/
+// interest/relationship), in one transaction. Writing requires "editor"+.
+app.patch(
+  '/api/projects/:projectId/stakeholders/:stakeholderId',
+  requireUser,
+  async (req, res) => {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(400).json({ error: 'Missing X-User-Id header' });
+      return;
+    }
+    const { projectId, stakeholderId } = req.params;
+    if (typeof projectId !== 'string') {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+    if (typeof stakeholderId !== 'string' || !UUID_RE.test(stakeholderId)) {
+      res.status(404).json({ error: 'Stakeholder not found' });
+      return;
+    }
+
+    try {
+      const auth = await requirePermissionOnProject(userId, projectId, 'editor');
+      if (!auth.ok) {
+        if (auth.reason === 'not_found') {
+          res.status(404).json({ error: 'Project not found' });
+        } else {
+          res.status(403).json({ error: 'Forbidden' });
+        }
+        return;
+      }
+
+      // The stakeholder must exist AND live on the same account as the project;
+      // otherwise 404 (don't leak existence of other accounts' stakeholders).
+      const [stakeholder] = await db
+        .select({ id: stakeholders.id, accountId: stakeholders.accountId })
+        .from(stakeholders)
+        .where(eq(stakeholders.id, stakeholderId))
+        .limit(1);
+      if (!stakeholder || stakeholder.accountId !== auth.accountId) {
+        res.status(404).json({ error: 'Stakeholder not found' });
+        return;
+      }
+
+      const validation = validateUpdateStakeholder(req.body);
+      if (!validation.ok) {
+        const firstError = Object.values(validation.errors)[0] ?? 'Invalid request body.';
+        res.status(400).json({ error: firstError, fields: validation.errors });
+        return;
+      }
+      const updates = validation.value;
+
+      const hasStakeholderFields =
+        updates.name !== undefined || updates.role !== undefined || updates.organisation !== undefined;
+      const hasPositionFields =
+        updates.power !== undefined || updates.interest !== undefined || updates.relationship !== undefined;
+      if (!hasStakeholderFields && !hasPositionFields) {
+        res.status(400).json({ error: 'No fields to update.' });
+        return;
+      }
+
+      // The position is edited in the project's latest snapshot.
+      const [snapshot] = await db
+        .select({ id: snapshots.id })
+        .from(snapshots)
+        .where(eq(snapshots.projectId, projectId))
+        .orderBy(desc(snapshots.capturedAt))
+        .limit(1);
+      if (!snapshot) {
+        // TODO: same snapshot-management gap as add.
+        res.status(409).json({ error: 'Project has no snapshot to edit.' });
+        return;
+      }
+
+      // The stakeholder must have a position in this snapshot — both to edit a
+      // position and to return a StakeholderPositionDTO. If it's at account
+      // level but not on this project's latest snapshot, 404.
+      const [existingPosition] = await db
+        .select({ id: stakeholderPositions.id })
+        .from(stakeholderPositions)
+        .where(
+          and(
+            eq(stakeholderPositions.stakeholderId, stakeholderId),
+            eq(stakeholderPositions.snapshotId, snapshot.id),
+            eq(stakeholderPositions.projectId, projectId),
+          ),
+        )
+        .limit(1);
+      if (!existingPosition) {
+        res.status(404).json({ error: 'Stakeholder is not on this project\'s latest snapshot.' });
+        return;
+      }
+
+      // TODO: snapshot semantics. Currently we mutate the latest snapshot's
+      // positions. When snapshots become frozen historical records, editing a
+      // position should write to a new working snapshot, not a historical one.
+      // TODO: no optimistic locking — two concurrent edits are last-write-wins.
+      await db.transaction(async (tx) => {
+        if (hasStakeholderFields) {
+          const set: Partial<typeof stakeholders.$inferInsert> = { updatedAt: new Date() };
+          if (updates.name !== undefined) set.name = updates.name;
+          if (updates.role !== undefined) set.role = updates.role;
+          if (updates.organisation !== undefined) set.organisation = updates.organisation;
+          await tx.update(stakeholders).set(set).where(eq(stakeholders.id, stakeholderId));
+        }
+        if (hasPositionFields) {
+          const set: Partial<typeof stakeholderPositions.$inferInsert> = {};
+          if (updates.power !== undefined) set.power = updates.power;
+          if (updates.interest !== undefined) set.interest = updates.interest;
+          if (updates.relationship !== undefined) set.relationship = updates.relationship;
+          await tx
+            .update(stakeholderPositions)
+            .set(set)
+            .where(
+              and(
+                eq(stakeholderPositions.stakeholderId, stakeholderId),
+                eq(stakeholderPositions.snapshotId, snapshot.id),
+                eq(stakeholderPositions.projectId, projectId),
+              ),
+            );
+        }
+      });
+
+      // Return the updated entity in the same shape the GET endpoint uses.
+      const [row] = await db
+        .select({
+          id: stakeholders.id,
+          name: stakeholders.name,
+          role: stakeholders.role,
+          organisation: stakeholders.organisation,
+          power: stakeholderPositions.power,
+          interest: stakeholderPositions.interest,
+          relationship: stakeholderPositions.relationship,
+          targetRelationship: stakeholderPositions.targetRelationship,
+          targetPower: stakeholderPositions.targetPower,
+          targetInterest: stakeholderPositions.targetInterest,
+        })
+        .from(stakeholderPositions)
+        .innerJoin(stakeholders, eq(stakeholders.id, stakeholderPositions.stakeholderId))
+        .where(
+          and(
+            eq(stakeholderPositions.stakeholderId, stakeholderId),
+            eq(stakeholderPositions.snapshotId, snapshot.id),
+            eq(stakeholderPositions.projectId, projectId),
+          ),
+        )
+        .limit(1);
+
+      if (!row) {
+        res.status(500).json({ error: 'Updated stakeholder could not be read back.' });
+        return;
+      }
+      const body: StakeholderPositionDTO = row;
+      res.status(200).json(body);
+    } catch (err) {
+      console.error('PATCH /api/projects/:projectId/stakeholders/:stakeholderId failed:', err);
       res.status(500).json({ error: 'Internal server error' });
     }
   },
