@@ -16,7 +16,7 @@ export type StakeholderFormMode =
   | { kind: 'add' }
   | { kind: 'edit'; stakeholder: StakeholderPositionDTO };
 
-interface AddStakeholderFormProps {
+interface StakeholderFormProps {
   projectId: string;
   mode: StakeholderFormMode;
   onCancel: () => void;
@@ -47,7 +47,7 @@ function emptyToNull(value: string): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
-export default function AddStakeholderForm({ projectId, mode, onCancel, onSaved }: AddStakeholderFormProps) {
+export default function StakeholderForm({ projectId, mode, onCancel, onSaved }: StakeholderFormProps) {
   const initial = mode.kind === 'edit' ? mode.stakeholder : null;
 
   const [name, setName] = useState(initial?.name ?? '');

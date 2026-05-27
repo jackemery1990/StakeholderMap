@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { apiFetch } from './api';
 import StakeholderGrid from './StakeholderGrid';
-import AddStakeholderForm, { type StakeholderFormMode } from './AddStakeholderForm';
+import StakeholderForm, { type StakeholderFormMode } from './StakeholderForm';
 import type { ProjectStakeholdersLatestResponse } from '../../shared';
 
 type State =
@@ -95,7 +95,7 @@ export default function ProjectGridPage() {
       </div>
 
       {formMode && (
-        <AddStakeholderForm
+        <StakeholderForm
           // Remount when the target changes so fields re-init from the new mode.
           key={formMode.kind === 'edit' ? `edit-${formMode.stakeholder.id}` : 'add'}
           projectId={project.id}
