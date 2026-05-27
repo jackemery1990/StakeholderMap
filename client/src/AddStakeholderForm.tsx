@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiPost, apiPatch } from './api';
+import { apiPost, apiPatch, apiDelete } from './api';
 import {
   RELATIONSHIPS,
   validateCreateStakeholder,
@@ -30,6 +30,15 @@ const DEFAULT_RELATIONSHIP = 3; // Neutral
 const labelStyle: React.CSSProperties = { display: 'block', fontWeight: 600, marginBottom: 4 };
 const fieldStyle: React.CSSProperties = { marginBottom: 14 };
 const errorStyle: React.CSSProperties = { color: '#C0392B', fontSize: 13, marginTop: 4 };
+// Destructive action: muted-red text + outline, clearly distinct from Save.
+const deleteButtonStyle: React.CSSProperties = {
+  color: '#C0392B',
+  background: 'none',
+  border: '1px solid #e3b4ae',
+  borderRadius: 4,
+  padding: '6px 10px',
+  cursor: 'pointer',
+};
 
 // Normalise free text the same way the server does, so the change-diff compares
 // like with like (trim; empty → null for the optional fields).
@@ -51,6 +60,8 @@ export default function AddStakeholderForm({ projectId, mode, onCancel, onSaved 
   const [errors, setErrors] = useState<CreateStakeholderFieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const isEdit = mode.kind === 'edit';
 
@@ -119,6 +130,21 @@ export default function AddStakeholderForm({ projectId, mode, onCancel, onSaved 
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
       setSubmitting(false);
+    }
+  }
+
+  // Remove this stakeholder from the project (edit mode only). On error, stay in
+  // the confirmation state so the user can retry.
+  async function handleDelete() {
+    if (mode.kind !== 'edit') return;
+    setSubmitError(null);
+    setDeleting(true);
+    try {
+      await apiDelete(`/api/projects/${projectId}/stakeholders/${mode.stakeholder.id}`);
+      onSaved();
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Could not delete. Please try again.');
+      setDeleting(false);
     }
   }
 
@@ -256,14 +282,44 @@ export default function AddStakeholderForm({ projectId, mode, onCancel, onSaved 
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 10 }}>
-        <button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Add stakeholder'}
-        </button>
-        <button type="button" onClick={onCancel} disabled={submitting}>
-          Cancel
-        </button>
-      </div>
+      {confirmingDelete ? (
+        // Inline confirmation: Save/Cancel hidden, fields preserved.
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ color: '#C0392B', fontWeight: 600 }}>Remove from this project?</span>
+          <button type="button" onClick={handleDelete} disabled={deleting} style={deleteButtonStyle}>
+            {deleting ? 'Deleting…' : 'Yes, remove'}
+          </button>
+          <button type="button" onClick={() => setConfirmingDelete(false)} disabled={deleting}>
+            No
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {isEdit ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSubmitError(null);
+                setConfirmingDelete(true);
+              }}
+              disabled={submitting}
+              style={deleteButtonStyle}
+            >
+              Delete from project
+            </button>
+          ) : (
+            <span />
+          )}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="submit" disabled={submitting}>
+              {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Add stakeholder'}
+            </button>
+            <button type="button" onClick={onCancel} disabled={submitting}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </form>
   );
 }

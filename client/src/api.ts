@@ -60,3 +60,12 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return sendJson<T>('PATCH', path, body);
 }
+
+/** DELETE `path`. Expects 204 No Content (no body to parse). Throws on a non-2xx response. */
+export async function apiDelete(path: string): Promise<void> {
+  const res = await fetch(path, {
+    method: 'DELETE',
+    headers: { 'X-User-Id': PLACEHOLDER_USER_ID },
+  });
+  if (!res.ok) throw new Error(await errorMessage(res));
+}

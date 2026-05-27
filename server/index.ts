@@ -403,6 +403,73 @@ app.patch(
   },
 );
 
+// Remove a stakeholder from THIS project: delete its position rows across all of
+// the project's snapshots, leaving the account-level stakeholder record (and any
+// positions on other projects) intact. Writing requires "editor"+.
+app.delete(
+  '/api/projects/:projectId/stakeholders/:stakeholderId',
+  requireUser,
+  async (req, res) => {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(400).json({ error: 'Missing X-User-Id header' });
+      return;
+    }
+    const { projectId, stakeholderId } = req.params;
+    if (typeof projectId !== 'string') {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+    if (typeof stakeholderId !== 'string' || !UUID_RE.test(stakeholderId)) {
+      res.status(404).json({ error: 'Stakeholder not found' });
+      return;
+    }
+
+    try {
+      const auth = await requirePermissionOnProject(userId, projectId, 'editor');
+      if (!auth.ok) {
+        if (auth.reason === 'not_found') {
+          res.status(404).json({ error: 'Project not found' });
+        } else {
+          res.status(403).json({ error: 'Forbidden' });
+        }
+        return;
+      }
+
+      // Stakeholder must exist AND be on the same account, else 404 (no leak).
+      const [stakeholder] = await db
+        .select({ id: stakeholders.id, accountId: stakeholders.accountId })
+        .from(stakeholders)
+        .where(eq(stakeholders.id, stakeholderId))
+        .limit(1);
+      if (!stakeholder || stakeholder.accountId !== auth.accountId) {
+        res.status(404).json({ error: 'Stakeholder not found' });
+        return;
+      }
+
+      // Remove the stakeholder from this project entirely — every snapshot, not
+      // just the latest. Single statement; idempotent (0 rows matched → still
+      // 204). The stakeholder record itself is intentionally left in place.
+      // TODO: when snapshots become frozen records, deleting from historical
+      // snapshots becomes a different operation ("remove from current view going
+      // forward, preserve history"). Full removal is simpler for now.
+      await db
+        .delete(stakeholderPositions)
+        .where(
+          and(
+            eq(stakeholderPositions.stakeholderId, stakeholderId),
+            eq(stakeholderPositions.projectId, projectId),
+          ),
+        );
+
+      res.status(204).end();
+    } catch (err) {
+      console.error('DELETE /api/projects/:projectId/stakeholders/:stakeholderId failed:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
 const port = Number(process.env.PORT) || 3001;
 
 app.listen(port, '0.0.0.0', () => {
