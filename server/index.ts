@@ -17,8 +17,10 @@ const env = {
 
 const app = express();
 
-// Allow the Vite frontend dev origin to call this API. `allowedHeaders` must
-// list X-User-Id explicitly: it is a non-safelisted custom header, so browsers
+// Kept for direct cross-origin testing via curl and for future production
+// setup; not exercised by the browser in dev because of the Vite proxy
+// (which makes /api requests same-origin). `allowedHeaders` must list
+// X-User-Id explicitly: it is a non-safelisted custom header, so browsers
 // preflight it and the response must opt it in (the placeholder auth header,
 // soon to be Authorization once Clerk lands).
 app.use(

@@ -11,5 +11,15 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     allowedHosts: true,
+    proxy: {
+      // Dev only: forward /api/* to the Express API so the browser makes
+      // same-origin requests (no CORS, works through the *.replit.dev proxy).
+      // The /api prefix is preserved on the way through — the server mounts
+      // its routes under /api — so no path rewrite is needed.
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+    },
   },
 });

@@ -2,15 +2,15 @@
 // that when Clerk lands we swap the X-User-Id header for a real Authorization
 // token in exactly one spot.
 
-// Dev: the API runs on its own origin (CORS-enabled for the Vite dev server).
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3001';
+// Paths are relative (e.g. "/api/..."): the Vite dev server proxies /api/* to
+// the Express API, so requests are same-origin from the browser's perspective.
 
 // PLACEHOLDER AUTH — temporary. Sent on every request until Clerk replaces it.
 const PLACEHOLDER_USER_ID = 'seed_user_1';
 
 /** GET `path` and parse the JSON body as `T`. Throws on a non-2xx response. */
 export async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(path, {
     headers: { 'X-User-Id': PLACEHOLDER_USER_ID },
   });
 
