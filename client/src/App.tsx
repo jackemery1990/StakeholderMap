@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from './api';
+import StakeholderGrid from './StakeholderGrid';
 import type { ProjectStakeholdersLatestResponse } from '../../shared';
 
 // TODO: replace with router param when projects list lands.
@@ -45,22 +46,25 @@ export default function App() {
   const { project, snapshot, stakeholders } = state.data;
 
   return (
-    <main>
+    <main
+      style={{
+        maxWidth: 820,
+        margin: '24px auto',
+        padding: '0 16px',
+        fontFamily: 'system-ui, sans-serif',
+      }}
+    >
       <h1>Stakeholders for {project.name}</h1>
       {snapshot ? (
-        <p>
-          {snapshot.label}, captured {new Date(snapshot.capturedAt).toLocaleString()}
-        </p>
+        <>
+          <p>
+            {snapshot.label}, captured {new Date(snapshot.capturedAt).toLocaleString()}
+          </p>
+          <StakeholderGrid stakeholders={stakeholders} />
+        </>
       ) : (
         <p>No snapshots yet.</p>
       )}
-      <ul>
-        {stakeholders.map((s) => (
-          <li key={s.id}>
-            {s.name} — power {s.power}, interest {s.interest}, relationship {s.relationship}
-          </li>
-        ))}
-      </ul>
     </main>
   );
 }
